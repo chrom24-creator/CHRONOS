@@ -1,0 +1,44 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>CHRONOS</AssemblyName>
+    <RootNamespace>OsuCollectorLazer</RootNamespace>
+    <ApplicationIcon>CHRONOS.ico</ApplicationIcon>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    
+    <!-- Metadata -->
+    <Version>3.0.0</Version>
+    <Authors>CHRONOS Team</Authors>
+    <Product>CHRONOS</Product>
+    <Description>High-speed osu!collector downloader & collection manager for osu!lazer and osu!stable with DPI bypass</Description>
+
+    <!-- Single self-contained executable -->
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>true</SelfContained>
+    <PublishSingleFile>true</PublishSingleFile>
+    <PublishTrimmed>false</PublishTrimmed>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+  </PropertyGroup>
+
+  <!-- Realm and Lazer dependencies (resolved from osu!lazer install or local libs) -->
+  <ItemGroup>
+    <Reference Include="Realm" Condition="Exists('$(LOCALAPPDATA)\osulazer\current\Realm.dll')">
+      <HintPath>$(LOCALAPPDATA)\osulazer\current\Realm.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <Reference Include="MongoDB.Bson" Condition="Exists('$(LOCALAPPDATA)\osulazer\current\MongoDB.Bson.dll')">
+      <HintPath>$(LOCALAPPDATA)\osulazer\current\MongoDB.Bson.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <Reference Include="Remotion.Linq" Condition="Exists('$(LOCALAPPDATA)\osulazer\current\Remotion.Linq.dll')">
+      <HintPath>$(LOCALAPPDATA)\osulazer\current\Remotion.Linq.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+  </ItemGroup>
+
+</Project>
