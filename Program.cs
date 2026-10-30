@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.IO.Compression;
 using System.Text;
 using System.Text.RegularExpressions;
 
@@ -208,8 +209,15 @@ internal static class Program
             }
             else if (act == 2)
             {
+                string? zipPath = null;
+                if (config.TargetMode == OsuTargetMode.Lazer)
+                {
+                    var dlChoice = PromptLazerDownloadDestination(col, col.SetIds.Count, config, out zipPath);
+                    if (dlChoice == LazerDownloadChoice.Cancel) return;
+                }
+
                 await ExecuteDownloadAndCollectionFlowAsync(
-                    col, col.SetIds, createCollection: true, col.Name, config, noImport: false, tempDir, history);
+                    col, col.SetIds, createCollection: true, col.Name, config, noImport: false, tempDir, history, zipPath);
                 RefreshSnapshot(config);
             }
             return;
@@ -231,8 +239,15 @@ internal static class Program
 
         if (sel == 0)
         {
+            string? zipPath = null;
+            if (config.TargetMode == OsuTargetMode.Lazer)
+            {
+                var dlChoice = PromptLazerDownloadDestination(col, missingSetIds.Count, config, out zipPath);
+                if (dlChoice == LazerDownloadChoice.Cancel) return;
+            }
+
             await ExecuteDownloadAndCollectionFlowAsync(
-                col, missingSetIds, createCollection: true, col.Name, config, noImport: false, tempDir, history);
+                col, missingSetIds, createCollection: true, col.Name, config, noImport: false, tempDir, history, zipPath);
             RefreshSnapshot(config);
         }
         else if (installedSets > 0 && sel == 1)
@@ -243,8 +258,15 @@ internal static class Program
         }
         else if ((installedSets > 0 && sel == 2) || (installedSets == 0 && sel == 1))
         {
+            string? zipPath = null;
+            if (config.TargetMode == OsuTargetMode.Lazer)
+            {
+                var dlChoice = PromptLazerDownloadDestination(col, missingSetIds.Count, config, out zipPath);
+                if (dlChoice == LazerDownloadChoice.Cancel) return;
+            }
+
             await ExecuteDownloadAndCollectionFlowAsync(
-                col, missingSetIds, createCollection: false, col.Name, config, noImport: false, tempDir, history);
+                col, missingSetIds, createCollection: false, col.Name, config, noImport: false, tempDir, history, zipPath);
             RefreshSnapshot(config);
         }
     }
@@ -580,6 +602,7 @@ internal static class Program
                 new[]
                 {
                     $"Куда качать и добавлять коллекции : {(config.TargetMode == OsuTargetMode.Stable ? "OSU!STABLE" : "OSU!LAZER")}",
+                    $"Режим скачивания для osu!lazer     : {GetLazerDownloadModeLabel(config.LazerDownloadMode)}",
                     $"Скачивать карты без видео         : {(config.NoVideo ? "ДА (быстрее, меньше размер)" : "НЕТ (с видео)")}",
                     $"Одновременных загрузок (потоки)   : {config.Threads} (1–16)",
                     $"Путь к osu!lazer                  : {config.LazerExe ?? LazerDatabase.FindLazerExe() ?? "(не найден)"}",
@@ -596,31 +619,40 @@ internal static class Program
                     config.Save();
                     break;
                 case 1:
-                    config.NoVideo = !config.NoVideo;
+                    config.LazerDownloadMode = (config.LazerDownloadMode ?? "Ask").ToLowerInvariant() switch
+                    {
+                        "ask" => "Zip",
+                        "zip" => "Game",
+                        _ => "Ask",
+                    };
                     config.Save();
                     break;
                 case 2:
+                    config.NoVideo = !config.NoVideo;
+                    config.Save();
+                    break;
+                case 3:
                     string tStr = ChronosUi.Prompt("Сколько карт качать одновременно (1–16)", config.Threads.ToString());
                     if (int.TryParse(tStr, out int t)) config.Threads = Math.Clamp(t, 1, 16);
                     config.Save();
                     break;
-                case 3:
+                case 4:
                     string lExe = ChronosUi.Prompt("Путь к osu!.exe для lazer (оставьте пустым для автопоиска)");
                     config.LazerExe = string.IsNullOrWhiteSpace(lExe) ? null : lExe;
                     config.Save();
                     LazerDatabase.InitializeNativeResolver(config.LazerExe);
                     break;
-                case 4:
+                case 5:
                     string sDir = ChronosUi.Prompt("Путь к папке osu!stable, например C:\\osu! (оставьте пустым для автопоиска)");
                     config.StableDir = string.IsNullOrWhiteSpace(sDir) ? null : sDir;
                     config.Save();
                     break;
-                case 5:
+                case 6:
                     string saveDir = ChronosUi.Prompt("Папка для сохранения копий .osz (оставьте пустым, чтобы не сохранять)");
                     config.SaveDir = string.IsNullOrWhiteSpace(saveDir) ? null : Path.GetFullPath(saveDir);
                     config.Save();
                     break;
-                case 6:
+                case 7:
                     try
                     {
                         Directory.CreateDirectory(ChronosStorage.StorageDir);
@@ -628,7 +660,7 @@ internal static class Program
                     }
                     catch { /* ignore */ }
                     break;
-                case 7:
+                case 8:
                     config.Save();
                     return;
             }
@@ -713,13 +745,15 @@ internal static class Program
         ChronosConfig config,
         bool noImport,
         string tempDir,
-        History history)
+        History history,
+        string? zipPath = null)
     {
+        bool isZip = !string.IsNullOrEmpty(zipPath);
         bool isStable = config.TargetMode == OsuTargetMode.Stable;
         string? lazerExe = null;
         string? stableSongsDir = null;
 
-        if (!noImport && setsToDownload.Count > 0)
+        if (!noImport && !isZip && setsToDownload.Count > 0)
         {
             if (isStable)
             {
@@ -741,24 +775,80 @@ internal static class Program
             }
         }
 
-        if (config.SaveDir != null)
+        if (config.SaveDir != null && !isZip)
             Directory.CreateDirectory(config.SaveDir);
 
         Dictionary<int, List<string>>? downloadedOszMd5s = null;
         int ok = 0, fail = 0;
+        string? stagingDir = null;
 
         if (setsToDownload.Count > 0)
         {
             Console.WriteLine();
+            string targetDesc = isZip ? "в .zip архив" : $"для {GameLabel(config)}";
             ChronosUi.WriteLine(
-                $"  Скачиваю {setsToDownload.Count} карт(ы) для {GameLabel(config)} ({config.Threads} потоков)...",
+                $"  Скачиваю {setsToDownload.Count} карт(ы) {targetDesc} ({config.Threads} потоков)...",
                 ConsoleColor.Cyan);
 
+            if (isZip)
+            {
+                stagingDir = Path.Combine(tempDir, $"zip_stage_{Guid.NewGuid():N}");
+                Directory.CreateDirectory(stagingDir);
+            }
+
             var dlRes = await CollectorService.DownloadAndImportSetsAsync(
-                col, setsToDownload, config, noImport, lazerExe, stableSongsDir, tempDir, history);
+                col,
+                setsToDownload,
+                config,
+                noImport: noImport || isZip,
+                lazerExe,
+                stableSongsDir,
+                tempDir,
+                history,
+                customDownloadDir: stagingDir);
+
             ok = dlRes.OkCount;
             fail = dlRes.FailCount;
             downloadedOszMd5s = dlRes.DownloadedOszMd5s;
+        }
+
+        if (isZip && stagingDir != null)
+        {
+            try
+            {
+                if (ok > 0)
+                {
+                    Console.WriteLine();
+                    ChronosUi.WriteLine($"  Упаковываю {ok} карт(ы) в ZIP архив: {Path.GetFileName(zipPath!)}...", ConsoleColor.Cyan);
+
+                    if (CreateZipArchiveFromDirectory(stagingDir, zipPath!, out long zipBytes, out string? zipErr))
+                    {
+                        ChronosUi.WriteLine(
+                            $"  ✔ ZIP архив готов: {zipPath} ({zipBytes / 1024.0 / 1024.0:0.0} MB)",
+                            ConsoleColor.Green);
+                        ChronosUi.WriteLine(
+                            "  💡 Подсказка: Импортируйте карты в osu!lazer частями (например, по 200–300 карт в день),",
+                            ConsoleColor.Cyan);
+                        ChronosUi.WriteLine(
+                            "     перетаскивая .osz файлы в игру, чтобы не превысить лимит (~350 карт/день).",
+                            ConsoleColor.Cyan);
+
+                        try
+                        {
+                            Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{zipPath}\"") { UseShellExecute = true });
+                        }
+                        catch { /* ignore */ }
+                    }
+                    else
+                    {
+                        ChronosUi.WriteLine($"  ✖ Ошибка при упаковке архива: {zipErr}", ConsoleColor.Red);
+                    }
+                }
+            }
+            finally
+            {
+                try { Directory.Delete(stagingDir, true); } catch { /* ignore */ }
+            }
         }
 
         if (createCollection)
@@ -773,7 +863,7 @@ internal static class Program
             (fail > 0 ? $", ошибок: {fail}" : "") + ".",
             fail == 0 ? ConsoleColor.Green : ConsoleColor.Yellow);
 
-        if (isStable && ok > 0 && !noImport)
+        if (isStable && ok > 0 && !noImport && !isZip)
         {
             ChronosUi.WriteLine(
                 $"  Подсказка для osu!stable: карты сохранены в {stableSongsDir}. Зайдите в выбор песен в osu!stable (или нажмите F5), чтобы игра их распаковала.",
@@ -934,6 +1024,21 @@ internal static class Program
             }
 
             var toDownload = cli.Force ? col.SetIds : missingSetIds;
+
+            string? zipPath = null;
+            if (cli.DownloadAsZip || (config.TargetMode == OsuTargetMode.Lazer && string.Equals(config.LazerDownloadMode, "zip", StringComparison.OrdinalIgnoreCase)))
+            {
+                string zipDir = cli.SaveDir ?? config.SaveDir ?? GetDefaultDownloadsFolder();
+                string safeName = SanitizeFileName(targetColName);
+                if (string.IsNullOrWhiteSpace(safeName)) safeName = $"collection_{id}";
+                zipPath = Path.Combine(zipDir, $"{safeName}.zip");
+            }
+            else if (!cli.NoImport && config.TargetMode == OsuTargetMode.Lazer && toDownload.Count > 350)
+            {
+                ChronosUi.WriteLine($"  ⚠ Внимание: В этой коллекции {toDownload.Count} карт. osu!lazer часто блокирует одновременную установку более 350 карт в день.", ConsoleColor.Yellow);
+                ChronosUi.WriteLine("    Для сохранения в .zip архив используйте флаг --zip (-z).", ConsoleColor.DarkYellow);
+            }
+
             var (ok, fail) = await ExecuteDownloadAndCollectionFlowAsync(
                 col,
                 toDownload,
@@ -942,7 +1047,8 @@ internal static class Program
                 config,
                 cli.NoImport,
                 tempDir,
-                history);
+                history,
+                zipPath);
 
             totalOk += ok;
             totalFail += fail;
@@ -1000,6 +1106,9 @@ internal static class Program
                     break;
                 case "--no-import":
                     opt.NoImport = true;
+                    break;
+                case "-z": case "--zip":
+                    opt.DownloadAsZip = true;
                     break;
                 case "-f": case "--force":
                     opt.Force = true;
@@ -1074,15 +1183,187 @@ internal static class Program
         Опции:
           -l,  --lazer              Работать с osu!lazer
           -s,  --stable             Работать с osu!stable
+          -z,  --zip                Скачать карты в .zip архив (обход лимита lazer на 350 карт/день)
           -co, --collection-only    НЕ качать карты, только создать/обновить коллекцию в игре
           -nc, --no-collection      Скачать карты без создания коллекции в игре
           -c,  --collection-name X  Задать своё имя коллекции
           -t,  --threads N          Количество потоков скачивания (1–16)
           -nv, --no-video           Качать карты без видео
           -f,  --force              Перекачать все карты заново
+          -o,  --save-dir <папка>   Папка для сохранения карт / .zip архива
           --list-collections        Показать список коллекций в выбранной игре
           -h,  --help               Справка
         """);
+    }
+
+    private enum LazerDownloadChoice
+    {
+        Cancel,
+        DirectGame,
+        ZipArchive,
+    }
+
+    private static LazerDownloadChoice PromptLazerDownloadDestination(
+        CollectorCollection col,
+        int setsCount,
+        ChronosConfig config,
+        out string? zipPath)
+    {
+        zipPath = null;
+
+        if (string.Equals(config.LazerDownloadMode, "game", StringComparison.OrdinalIgnoreCase))
+        {
+            return LazerDownloadChoice.DirectGame;
+        }
+
+        if (string.Equals(config.LazerDownloadMode, "zip", StringComparison.OrdinalIgnoreCase))
+        {
+            string defaultDir = !string.IsNullOrWhiteSpace(config.SaveDir)
+                ? config.SaveDir
+                : GetDefaultDownloadsFolder();
+            string safeName = SanitizeFileName(col.Name);
+            if (string.IsNullOrWhiteSpace(safeName)) safeName = $"collection_{col.Id}";
+            zipPath = Path.Combine(defaultDir, $"{safeName}.zip");
+            return LazerDownloadChoice.ZipArchive;
+        }
+
+        Console.WriteLine();
+        ChronosUi.WriteLine("  ┌──────────────────────────────────────── ВНИМАНИЕ ────────────────────────────────────────┐", ConsoleColor.Yellow);
+        ChronosUi.WriteLine("  │  ⚠ РЕКОМЕНДАЦИЯ: Рекомендуется выбрать скачивание в .zip архив!                          │", ConsoleColor.Yellow);
+        ChronosUi.WriteLine("  │                                                                                          │", ConsoleColor.Yellow);
+        ChronosUi.WriteLine("  │  osu!lazer зачастую запрещает или блокирует одновременную установку более 350 карт в     │", ConsoleColor.Yellow);
+        ChronosUi.WriteLine("  │  день (внутреннее ограничение / лимит импорта игры).                                     │", ConsoleColor.Yellow);
+        ChronosUi.WriteLine("  │                                                                                          │", ConsoleColor.Yellow);
+        ChronosUi.WriteLine("  │  • В .zip архив: все карты скачаются в один архив — игра не зависнет и не выдаст ошибок. │", ConsoleColor.Cyan);
+        ChronosUi.WriteLine("  │  • В игру: прямой импорт через IPC (может заблокироваться, если карт >350).              │", ConsoleColor.Gray);
+        ChronosUi.WriteLine("  └──────────────────────────────────────────────────────────────────────────────────────────┘", ConsoleColor.Yellow);
+
+        int choice = ChronosUi.SelectMenu(
+            $"Куда скачать {setsCount} карт(ы) для osu!lazer?",
+            new[]
+            {
+                "Скачать в .zip архив [РЕКОМЕНДУЕТСЯ — обход лимита 350 карт/день]",
+                "Скачивать напрямую в игру (автоматический импорт в osu!lazer)",
+                "Отмена (вернуться назад)",
+            });
+
+        if (choice == 2)
+            return LazerDownloadChoice.Cancel;
+
+        if (choice == 0)
+        {
+            string defaultDir = !string.IsNullOrWhiteSpace(config.SaveDir)
+                ? config.SaveDir
+                : GetDefaultDownloadsFolder();
+            string safeName = SanitizeFileName(col.Name);
+            if (string.IsNullOrWhiteSpace(safeName)) safeName = $"collection_{col.Id}";
+            string defaultZip = Path.Combine(defaultDir, $"{safeName}.zip");
+
+            Console.WriteLine();
+            ChronosUi.WriteLine("  Куда сохранить .zip архив? (Нажмите Enter для пути по умолчанию):", ConsoleColor.Cyan);
+            string userInput = ChronosUi.Prompt("Путь к .zip файлу", defaultZip);
+            zipPath = ResolveZipPath(userInput, defaultDir, $"{safeName}.zip");
+            ChronosUi.WriteLine($"  Архив будет сохранён: {zipPath}", ConsoleColor.Gray);
+            return LazerDownloadChoice.ZipArchive;
+        }
+
+        return LazerDownloadChoice.DirectGame;
+    }
+
+    private static string GetLazerDownloadModeLabel(string? mode) =>
+        (mode ?? "Ask").ToLowerInvariant() switch
+        {
+            "zip" => ".ZIP архив (обход лимита 350 карт)",
+            "game" => "Напрямую в игру (автоимпорт)",
+            _ => "Спрашивать при скачивании (.zip рекомендуемый)",
+        };
+
+    private static string SanitizeFileName(string name)
+    {
+        if (string.IsNullOrWhiteSpace(name)) return "collection";
+        var invalid = Path.GetInvalidFileNameChars();
+        var sb = new StringBuilder(name.Length);
+        foreach (char c in name)
+        {
+            if (invalid.Contains(c) || c == '<' || c == '>' || c == ':' || c == '"' || c == '/' || c == '\\' || c == '|' || c == '?' || c == '*')
+                sb.Append('_');
+            else
+                sb.Append(c);
+        }
+        string result = sb.ToString().Trim('.', ' ');
+        return string.IsNullOrWhiteSpace(result) ? "collection" : result;
+    }
+
+    private static string GetDefaultDownloadsFolder()
+    {
+        try
+        {
+            string userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            string downloads = Path.Combine(userProfile, "Downloads");
+            if (Directory.Exists(downloads)) return downloads;
+        }
+        catch { }
+
+        try
+        {
+            string desktop = Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
+            if (Directory.Exists(desktop)) return desktop;
+        }
+        catch { }
+
+        return Environment.CurrentDirectory;
+    }
+
+    private static string ResolveZipPath(string input, string defaultDir, string defaultFileName)
+    {
+        if (string.IsNullOrWhiteSpace(input))
+            return Path.Combine(defaultDir, defaultFileName);
+
+        input = input.Trim('\"', ' ');
+
+        if (Directory.Exists(input) || input.EndsWith('\\') || input.EndsWith('/'))
+        {
+            return Path.Combine(input, defaultFileName);
+        }
+
+        if (!input.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
+        {
+            input += ".zip";
+        }
+
+        return Path.GetFullPath(input);
+    }
+
+    private static bool CreateZipArchiveFromDirectory(string sourceDir, string zipPath, out long totalBytes, out string? error)
+    {
+        totalBytes = 0;
+        error = null;
+        try
+        {
+            string? parent = Path.GetDirectoryName(zipPath);
+            if (!string.IsNullOrEmpty(parent))
+                Directory.CreateDirectory(parent);
+
+            if (File.Exists(zipPath))
+                File.Delete(zipPath);
+
+            using (var archive = ZipFile.Open(zipPath, ZipArchiveMode.Create))
+            {
+                var files = Directory.EnumerateFiles(sourceDir, "*.osz");
+                foreach (var file in files)
+                {
+                    archive.CreateEntryFromFile(file, Path.GetFileName(file), CompressionLevel.Fastest);
+                }
+            }
+
+            totalBytes = new FileInfo(zipPath).Length;
+            return true;
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+            return false;
+        }
     }
 
     private static string Truncate(string s, int max) =>

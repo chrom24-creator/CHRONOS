@@ -96,6 +96,7 @@ internal sealed class ChronosConfig
     public bool AutoCreateCollection { get; set; } = true;
     public int BatchSize { get; set; } = 25;
     public string? SaveDir { get; set; }
+    public string? LazerDownloadMode { get; set; } = "Ask"; // "Ask" (default), "Zip", "Game"
     public string? LazerExe { get; set; }
     public string? LazerDataDir { get; set; }
     public string? StableDir { get; set; }
@@ -155,6 +156,7 @@ internal sealed class CliOptions
     public bool? CreateCollection { get; set; }
     public string? CustomCollectionName { get; set; }
     public string? SaveDir { get; set; }
+    public bool DownloadAsZip { get; set; }
     public string? LazerExe { get; set; }
     public string? StableDir { get; set; }
     public int? BatchSize { get; set; }

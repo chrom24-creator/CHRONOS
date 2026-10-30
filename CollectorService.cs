@@ -169,7 +169,8 @@ internal static class CollectorService
         string? lazerExe,
         string? stableSongsDir,
         string tempDir,
-        History history)
+        History history,
+        string? customDownloadDir = null)
     {
         int done = 0, ok = 0, fail = 0;
         int total = setIds.Count;
@@ -191,9 +192,10 @@ internal static class CollectorService
             try
             {
                 // Для stable при включённом импорте качаем прямо в папку Songs (или в SaveDir)
-                string targetDir = (!noImport && isStable && stableSongsDir != null)
-                    ? stableSongsDir
-                    : (config.SaveDir ?? tempDir);
+                string targetDir = customDownloadDir ?? (
+                    (!noImport && isStable && stableSongsDir != null)
+                        ? stableSongsDir
+                        : (config.SaveDir ?? tempDir));
 
                 var result = await DownloadSetAsync(setId, targetDir, config);
                 int n = Interlocked.Increment(ref done);

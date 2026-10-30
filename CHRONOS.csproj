@@ -14,7 +14,7 @@
     <Version>3.0.0</Version>
     <Authors>CHRONOS Team</Authors>
     <Product>CHRONOS</Product>
-    <Description>High-speed osu!collector downloader & collection manager for osu!lazer and osu!stable with DPI bypass</Description>
+    <Description>High-speed osu!collector downloader &amp; collection manager for osu!lazer and osu!stable with DPI bypass</Description>
 
     <!-- Single self-contained executable -->
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
@@ -25,8 +25,22 @@
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
   </PropertyGroup>
 
-  <!-- Realm and Lazer dependencies (resolved from osu!lazer install or local libs) -->
-  <ItemGroup>
+  <!-- Realm and Lazer dependencies (resolved from local libs or osu!lazer install) -->
+  <ItemGroup Condition="Exists('libs\Realm.dll')">
+    <Reference Include="Realm">
+      <HintPath>libs\Realm.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <Reference Include="MongoDB.Bson">
+      <HintPath>libs\MongoDB.Bson.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <Reference Include="Remotion.Linq">
+      <HintPath>libs\Remotion.Linq.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+  </ItemGroup>
+  <ItemGroup Condition="!Exists('libs\Realm.dll')">
     <Reference Include="Realm" Condition="Exists('$(LOCALAPPDATA)\osulazer\current\Realm.dll')">
       <HintPath>$(LOCALAPPDATA)\osulazer\current\Realm.dll</HintPath>
       <Private>true</Private>
